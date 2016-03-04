@@ -10,8 +10,7 @@ from optparse import OptionParser
 import re
 import socket
 import sys
-import urllib2
-import base64
+import requests
 
 try:
     import json
@@ -50,51 +49,49 @@ def make_parse():
     return parser
 
 
-def fetch_sensu_data(server, port, client, username, password):
-    """ Connects to the Sensu API over a given host and port, and returns
-    dictionary based on the retrieved json data. """
-    base_url = 'http://' + server + ':' + str(port)
-    api_url = base_url + '/events/' + client
-    try:
-        request = urllib2.Request(api_url)
-        if username:
-            request.add_header('Authorization', http_auth(username, password))
-        request.add_header('User-Agent', 'sensu-report')
-        response = urllib2.urlopen(request)
-    except:
-        print "Fetching the Sensu API url didn't work:"
-        print api_url
-        raise
-    data = json.load(response)
-    return data
+class Fetch_sensu:
+    def __init__(self, server, port, username, password):
+      self.server=server
+      self.port=port
+      self.session=requests.Session()
+      self.session.auth=(username,password)
+
+    def fetch_sensu_data(self, client):
+        """ Connects to the Sensu API over a given host and port, and returns
+        dictionary based on the retrieved json data. """
+        base_url = 'http://' + self.server + ':' + str(self.port)
+        url = base_url + '/events/' + client
+        try:
+            response = self.session.get(url, headers={'User-Agent': 'sensu-report'})
+        except:
+            print "Fetching the Sensu API url didn't work:"
+            print url
+            raise
+        if response.status_code != 200:
+            raise(Exception('Status {0} returned when making API request for {1}'.format(response.status_code,url)))
+        data = json.loads(response.text)
+        return data
 
 
-def fetch_silence_data(server, port, client, username, password):
-    """ Connects to the Sensu API over a given host and port, and returns
-    dictionary based on the retrieved json for the stash. """
-    stash_url = 'http://' + server + ':' + str(port) + '/stashes/silence/' + client
-    try:
-        request = urllib2.Request(stash_url)
-        if username:
-            request.add_header('Authorization', http_auth(username, password))
-        request.add_header('User-Agent', 'sensu-report')
-        response = urllib2.urlopen(request)
-    except urllib2.HTTPError:
-        return {}
-    except:
-        print "Fetching the Sensu API url didn't work:"
-        print 'http://' + server + ':' + str(port) + '/events/' + client
-        raise
-    data = json.load(response)
-    return data
-
-
-# standard libs always send unauthenicated request and if server responds 401
-# with WWW-Authenitcate header, they then send authenicated request;
-# here we remove this inefficiency by injecting Authorization header ourselves
-def http_auth(username, password):
-    return 'Basic ' + \
-           base64.encodestring('%s:%s' % (username, password)).replace('\n', '')
+    def fetch_silence_data(self, client):
+        """ Connects to the Sensu API over a given host and port, and returns
+        dictionary based on the retrieved json for the stash. """
+        url = 'http://' + self.server + ':' + str(self.port) + '/stashes/silence/' + client
+        try:
+            response = self.session.get(url, headers={'User-Agent': 'sensu-report'})
+        except requests.HTTPError:
+            return {}
+        except:
+            print "Fetching the Sensu API url didn't work:"
+            print url
+            raise
+        if response.status_code != 200:
+            if response.status_code == 404:
+                return {}
+            else:
+                raise(Exception('Status {0} returned when making API request for {1}'.format(response.status_code,url)))
+        data = json.loads(response.text)
+        return data
 
 
 def pretty_date(time=False):
@@ -174,7 +171,7 @@ def print_report(data, max_line_length):
     """Prints a human readable report based on the sensu data"""
     print
     if len(data) > 0:
-        print "Don't Panic! Ops already knows! Failed Sensu checks on this host:"
+        print "The following checks are failing on this host, please take a look if you have a minute:"
         # Criticals
         for entry in sorted([x for x in data if x['check']['status'] == 2]):
             print_line(entry, max_line_length)
@@ -209,13 +206,13 @@ def main():
         print "Error: No sensu server provided."
         parser.print_help()
         sys.exit(1)
-    silence_data = fetch_silence_data(
-        options.server, options.port, options.client,
-        options.user, options.password)
+
+    sensu_fetch=Fetch_sensu(options.server, options.port, options.user, options.password)
+
+    silence_data = sensu_fetch.fetch_silence_data(options.client)
     print_silence_report(silence_data, options.max_line_length)
-    events = fetch_sensu_data(
-        options.server, options.port, options.client,
-        options.user, options.password)
+
+    events = sensu_fetch.fetch_sensu_data( options.client)
     print_report(events, options.max_line_length)
 
 
