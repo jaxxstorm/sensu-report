@@ -3,6 +3,8 @@ import time
 
 import sensu_report
 
+import requests
+
 
 def test_pretty_date():
     """ Lets put in some epochs we expect from sensu and make sure it is pretty
